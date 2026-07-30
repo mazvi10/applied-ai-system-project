@@ -1,5 +1,22 @@
 import streamlit as st
+from dotenv import load_dotenv
+
+# Load GEMINI_API_KEY (and any other vars) from a local .env file so the
+# Gemini SDK can authenticate. Does nothing if there's no .env file.
+load_dotenv()
+
+import rag
 from pawpal_system import Owner, Pet, Scheduler, Task
+
+
+@st.cache_resource
+def get_knowledge_base() -> rag.KnowledgeBase:
+    """Build the Ask PawPal knowledge base once and reuse it across reruns.
+
+    Cached so the vetted docs are read and BM25-indexed a single time, not on
+    every Streamlit rerun.
+    """
+    return rag.KnowledgeBase()
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
@@ -206,3 +223,38 @@ if st.button("Generate schedule"):
     # "Conflicts:" block here to avoid showing the same clash twice.
     explanation = scheduler.explain_plan().split("\nConflicts:")[0]
     st.text(explanation)
+
+st.divider()
+
+# --- Ask PawPal (RAG assistant) ---------------------------------------------
+st.subheader("Ask PawPal")
+
+st.caption(
+    "Ask a pet-care question and PawPal answers from its trusted care notes, "
+    "grounded with sources and aware of your pets. Not a substitute for your vet."
+)
+
+question = st.text_input(
+    "Your question",
+    value="",
+    placeholder="e.g. Is chocolate safe for my dog?",
+)
+
+if st.button("Ask"):
+    if not question.strip():
+        st.warning("Type a question first.")
+    else:
+        with st.spinner("PawPal is checking its notes..."):
+            answer = rag.ask_pawpal(
+                question.strip(),
+                owner=owner,
+                knowledge_base=get_knowledge_base(),
+            )
+        st.markdown(answer.text)
+
+        if answer.citations:
+            with st.expander(f"Sources ({len(answer.citations)})"):
+                for citation in answer.citations:
+                    st.markdown(
+                        f"**{citation.source}** — “{citation.quote}”"
+                    )
