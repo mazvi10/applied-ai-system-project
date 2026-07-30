@@ -1,0 +1,61 @@
+%% Ask PawPal - RAG system data flow
+%% INPUT (owner question + context) -> PROCESS (retrieve -> ground -> generate)
+%% -> OUTPUT (cited answer). Human and automated checks are highlighted.
+flowchart TD
+    %% ---------------- INPUT ----------------
+    subgraph INPUT["INPUT - Streamlit UI (app.py)"]
+        Q["Owner types a<br/>pet-care question"]
+        CTX["Owner context<br/>pets + pending tasks<br/>(duck-typed Owner)"]
+    end
+
+    %% ------------- KNOWLEDGE BASE -------------
+    subgraph SOURCE["TRUSTED SOURCE - human-vetted"]
+        DOCS["knowledge/*.md<br/>feeding, exercise, toxic_foods,<br/>grooming, health"]
+    end
+
+    %% -------------- RETRIEVER --------------
+    subgraph RET["RETRIEVER - deterministic, no API key (KnowledgeBase)"]
+        CHUNK["Load + split into<br/>paragraph Passages"]
+        TOK["Tokenize:<br/>lowercase + drop stopwords + stem"]
+        BM25["BM25Okapi keyword ranking<br/>retrieve top-k, best first"]
+        GATE{"Any passage<br/>with score &gt; 0?"}
+    end
+
+    %% --------------- AGENT ---------------
+    subgraph AGENT["AGENT - generation, calls API (ask_pawpal)"]
+        BUILD["Build grounded prompt:<br/>passages inlined as numbered sources<br/>+ owner summary + system rules"]
+        LLM["Gemini gemini-3.5-flash<br/>answer ONLY from docs + owner data<br/>thinking off, structured JSON out"]
+        PARSE["Parse JSON response:<br/>answer -> text<br/>citations -> Citation objects"]
+    end
+
+    %% -------------- OUTPUT --------------
+    FALLBACK["Grounded fallback:<br/>'not in my notes, ask your vet'<br/>NO API call - cannot hallucinate"]
+    OUT["OUTPUT: Answer.text +<br/>Sources expander (citations)<br/>rendered in UI"]
+
+    %% -------- CHECKS: human + automated --------
+    TEST["AUTOMATED TEST<br/>pytest tests/test_rag.py<br/>chocolate -> toxic_foods.md<br/>+ off-topic returns none"]
+    HUMAN["HUMAN CHECK<br/>Owner reads answer, verifies each<br/>claim against its cited Source,<br/>escalates urgent/toxic issues to vet"]
+
+    %% ---------------- FLOW ----------------
+    DOCS --> CHUNK --> TOK --> BM25
+    Q --> BM25
+    BM25 --> GATE
+    GATE -- "no (off-topic)" --> FALLBACK
+    GATE -- "yes" --> BUILD
+    CTX --> BUILD
+    BUILD --> LLM --> PARSE
+    PARSE --> OUT
+    FALLBACK --> OUT
+    OUT --> HUMAN
+
+    %% checks pointing at what they validate
+    TEST -.->|verifies retrieval| RET
+    DOCS -.->|curated by| HUMAN
+
+    %% ---------------- STYLING ----------------
+    classDef human fill:#ffe8c2,stroke:#cc7a00,color:#000;
+    classDef test fill:#d7ecff,stroke:#1f6fb2,color:#000;
+    classDef guard fill:#ffd6d6,stroke:#b22222,color:#000;
+    class HUMAN human;
+    class TEST test;
+    class GATE,FALLBACK guard;
