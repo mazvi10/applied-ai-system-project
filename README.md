@@ -1,246 +1,169 @@
-# PawPal+ (Module 2 Project)
+# PawPal+ — Pet-Care Scheduler with a Grounded "Ask PawPal" Assistant
 
-You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
+## Original project (Modules 1–3)
 
-## Scenario
+My original project is **PawPal+**, a Streamlit pet-care planner built on a pure-Python
+scheduler (`pawpal_system.py`). It lets an owner register their pets and care tasks
+(walks, feeding, meds, enrichment, grooming), then generates a prioritized daily plan
+that fits the time available, explains why each task was included or skipped, detects
+scheduling conflicts, and auto-recurs daily/weekly tasks. The core classes are `Owner`,
+`Pet`, `Task`, and `Scheduler`, with tests covering sorting, filtering, recurrence, and
+conflict detection.
 
-A busy pet owner needs help staying consistent with pet care. They want an assistant that can:
+## Title and summary
 
-- Track pet care tasks (walks, feeding, meds, enrichment, grooming, etc.)
-- Consider constraints (time available, priority, owner preferences)
-- Produce a daily plan and explain why it chose that plan
+**PawPal+** now adds **Ask PawPal**, a Retrieval-Augmented Generation (RAG) assistant that
+answers pet-care questions from a small, hand-vetted knowledge base instead of a language
+model's memory. Every answer is grounded in trusted care notes, shows its **sources**, and
+is aware of the current owner's pets and pending tasks. This matters because generic
+chatbots confidently invent pet-care advice — and bad advice about toxic foods or
+medication can hurt an animal. Ask PawPal only answers from vetted notes, cites them, and
+pushes urgent or toxic-exposure questions to a vet.
 
-Your job is to design the system first (UML), then implement the logic in Python, then connect it to the Streamlit UI.
+## Architecture overview
 
-## What you will build
+The system diagram lives at [`assets/rag_system.mmd`](assets/rag_system.mmd) (Mermaid —
+preview it in your IDE). It shows three main components and the data flow between them:
 
-Your final app should:
+- **Input** — the owner types a question in the Streamlit UI, and their pets + pending
+  tasks are pulled in as context.
+- **Retriever** (`KnowledgeBase` in `rag.py`) — loads the `knowledge/*.md` notes, splits
+  them into paragraph "passages", and ranks them for the question with **BM25 keyword
+  search** (`rank_bm25`). Retrieval is deterministic and needs **no API key**, so it is
+  fully unit-testable. Passages with a zero relevance score are dropped.
+- **Agent** (`ask_pawpal`) — if retrieval finds nothing relevant, it returns a safe
+  "not in my notes, ask your vet" answer **without calling the model** (it cannot
+  hallucinate). Otherwise it sends the retrieved passages as numbered, titled sources to
+  **Gemini (`gemini-3.5-flash`)** with a strict system prompt, and asks for a structured
+  JSON answer whose citations quote those sources verbatim.
+- **Output** — the answer text plus a **Sources** expander are rendered in the UI.
 
-- Let a user enter basic owner + pet info
-- Let a user add/edit tasks (duration + priority at minimum)
-- Generate a daily schedule/plan based on constraints and priorities
-- Display the plan clearly (and ideally explain the reasoning)
-- Include tests for the most important scheduling behaviors
+**Where humans and testing check the AI:** an automated `pytest` suite verifies the
+retriever offline; the zero-score gate + no-API fallback is an automated guard against
+off-topic hallucination; and the citations let the **owner verify each claim against its
+source**, with urgent/toxic issues escalated to a **vet** (the human/professional in the
+loop). These checkpoints are color-coded in the diagram.
 
-## Getting started
-
-### Setup
+## Setup instructions
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+# 1. From the project directory, create and activate a virtual environment (Python 3.12)
+python3.12 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+
+# 2. Install dependencies
 pip install -r requirements.txt
-```
 
-### Suggested workflow
+# 3. Provide a Gemini API key (generation only — retrieval and tests need no key).
+#    Create a .env file in this directory:
+echo "GEMINI_API_KEY=your-key-here" > .env
 
-1. Read the scenario carefully and identify requirements and edge cases.
-2. Draft a UML diagram (classes, attributes, methods, relationships).
-3. Convert UML into Python class stubs (no logic yet).
-4. Implement scheduling logic in small increments.
-5. Add tests to verify key behaviors.
-6. Connect your logic to the Streamlit UI in `app.py`.
-7. Refine UML so it matches what you actually built.
+# 4. Run the app
+streamlit run app.py
 
-## 🖥️ Sample Output
-
-Paste a sample of your app's CLI or Streamlit output here so a reader can see what a generated plan looks like:
-
-```
-========================================
-Today's Schedule
-========================================
-Daily plan for Sarah:
-  08:00 — Biscuit: Morning walk (30 min) [priority: high]
-  08:30 — Biscuit: Feeding (10 min) [priority: high]
-  08:40 — Milo: Give meds (5 min) [priority: high]
-  08:45 — Milo: Play time (20 min) [priority: medium]
-
-Why this plan:
-Planned 4 task(s) using 65 of 90 available minutes.
-  Included Biscuit's Morning walk (30 min, high priority).
-  Included Biscuit's Feeding (10 min, high priority).
-  Included Milo's Give meds (5 min, high priority).
-  Included Milo's Play time (20 min, medium priority).
-  Skipped Biscuit's Grooming — not enough time left (needs 40 min).
-```
-
-## 🧪 Testing PawPal+
-
-```bash
-# Run the full test suite:
+# 5. (Optional) Run the tests — no API key required
 pytest
-
-# Run with coverage:
-pytest --cov
 ```
 
-Sample test output:
+In the app: add an owner, add a pet and some tasks, generate a schedule, then scroll to
+the **Ask PawPal** section and ask a question.
 
-```
-============================= test session starts ==============================
-platform darwin -- Python 3.12.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/mazvitanhidza/ai110/ai110-module2show-pawpal-starter/.venv/bin/python
-cachedir: .pytest_cache
-rootdir: /Users/mazvitanhidza/ai110/ai110-module2show-pawpal-starter
-plugins: anyio-4.14.1
-collecting ... collected 15 items
+## Sample interactions
 
-tests/test_pawpal.py::test_mark_complete_changes_status PASSED           [  6%]
-tests/test_pawpal.py::test_adding_task_increases_pet_task_count PASSED   [ 13%]
-tests/test_pawpal.py::test_filter_tasks_excludes_completed_by_default PASSED [ 20%]
-tests/test_pawpal.py::test_filter_tasks_by_category PASSED               [ 26%]
-tests/test_pawpal.py::test_sort_breaks_priority_ties_by_shortest_duration PASSED [ 33%]
-tests/test_pawpal.py::test_completing_daily_task_spawns_next_day_instance PASSED [ 40%]
-tests/test_pawpal.py::test_completing_weekly_task_spawns_seven_days_later PASSED [ 46%]
-tests/test_pawpal.py::test_completing_one_shot_task_spawns_nothing PASSED [ 53%]
-tests/test_pawpal.py::test_spawned_instance_not_due_until_its_date PASSED [ 60%]
-tests/test_pawpal.py::test_generate_plan_includes_due_recurring_task PASSED [ 66%]
-tests/test_pawpal.py::test_generate_plan_orders_entries_chronologically PASSED [ 73%]
-tests/test_pawpal.py::test_detect_conflicts_flags_identical_times PASSED [ 80%]
-tests/test_pawpal.py::test_detect_conflicts_flags_overlapping_fixed_times PASSED [ 86%]
-tests/test_pawpal.py::test_detect_conflicts_empty_when_times_dont_overlap PASSED [ 93%]
-tests/test_pawpal.py::test_invalid_fixed_time_falls_back_to_flexible_without_crashing PASSED [100%]
+These are **verbatim outputs** captured from the running system (via `rag.ask_pawpal`).
 
-============================== 15 passed in 0.02s ==============================
+**1. Toxic-food question — routes to the toxic-foods notes and escalates to a vet**
+
+```text
+Q: Can my dog have chocolate?
+
+A: No, your dog should not have chocolate. Chocolate is dangerous for pets because it
+   contains theobromine, which dogs cannot process well. Dark and baking chocolate are
+   the most toxic, and even small amounts can cause serious symptoms such as vomiting,
+   tremors, a racing heart, or seizures. If your pet has consumed chocolate, please
+   contact your vet or an animal poison control line immediately.
+
+Sources:
+  - [Toxic Foods] "Chocolate contains theobromine, which dogs and cats cannot process
+    well; dark and baking chocolate are the most toxic, and even small amounts can cause
+    vomiting, tremors, a racing heart, or seizures."
 ```
 
-## 📐 Smarter Scheduling
+**2. Personalized exercise question — uses the owner's pet and pending task**
 
+```text
+Owner: Sarah, with puppy "Biscuit" (dog, age 0), pending task: Morning walk
+Q: How much should I exercise my new puppy?
 
-| Feature | Method(s) | Notes |
-|---------|-----------|-------|
-| Task sorting | `Scheduler.sort_by_priority(tasks)`|  sorts on a two-part key `(priority, duration)`: high→medium→low, then shortest-first to break ties. `generate_plan()` also sorts the final plan by `start_minutes` for chronological order.
- |
-| Filtering |`Scheduler.filter_tasks(pet, status, category, due_on)` | one helper with optional filters (by pet, status, category, or due date). `get_single_pet_tasks(pet)` wraps it for a single pet |
-| Conflict handling | `Scheduler.detect_conflicts()`|eturns warning strings (never crashes). Two tasks conflict when their time windows overlap (`second.start < first.start + first.duration`), since the owner can't be in two places at once. |
-| Recurring tasks | `Pet.complete_task(task, today)`| arks it done and auto-spawns the next occurrence with `Task.next_occurrence()`, dated `today + RECURRENCE_DELTAS[recurrence]` (daily +1 day, weekly +7). `Task.is_due(today)` keeps future occurrences out of today's plan.
- |
+A: Hi Sarah! For your new puppy, a helpful guideline is the "five minutes per month of
+   age" rule. This means you should aim for about five minutes of structured exercise
+   per month of age, once or twice a day. This guideline is designed to protect your
+   puppy's growing joints from overexertion while still helping them burn off energy.
+   Since you have a "Morning walk" on your pending tasks for Biscuit, keeping this time
+   limit in mind will help keep them safe and healthy!
 
-## ✨ Features
-
-- **Priority sorting** — `sort_by_priority()` orders tasks on a two-part key
-  `(priority, duration)`: high → medium → low, then shortest-first to break
-  ties (so more short tasks fit). Unknown priorities sort last. The sort is
-  stable, so fully-tied tasks keep their insertion order.
-
-- **Sorting by time (chronological plan)** — after fitting tasks,
-  `generate_plan()` sorts the final schedule by `start_minutes` so the day
-  reads top-to-bottom in clock order, regardless of the order tasks were picked.
-
-- **Greedy time-budget planning** — `generate_plan()` pools every pet's tasks
-  due today, walks them in priority order, and includes each one that still
-  fits in the remaining minutes; the rest go to a `skipped` list. Tasks are
-  laid out starting at 08:00.
-
-- **Fixed-time appointments** — a task with a `preferred_time` ("HH:MM") is
-  pinned to that time instead of flowing with the greedy cursor. Blank or
-  malformed times are treated as flexible rather than crashing the plan
-  (`_clock_to_minutes` parses leniently).
-
-- **Conflict warnings** — `detect_conflicts()` scans the placed plan and flags
-  any two tasks whose time windows overlap (the owner can't be in two places at
-  once). It only reads already-placed times, so it never crashes; back-to-back
-  tasks that merely touch (e.g. 08:00–08:30 then 08:30) are not flagged.
-
-- **Daily & weekly recurrence** — completing a task via `Pet.complete_task()`
-  marks it done and auto-spawns its next occurrence with
-  `Task.next_occurrence()`, dated `today + 1 day` (daily) or `+ 7 days`
-  (weekly). `timedelta` keeps month/year rollovers correct (Jul 31 → Aug 1).
-  The finished task stays as history; one-shot tasks spawn nothing.
-
-- **Due-date awareness** — `Task.is_due(today)` keeps future recurring
-  occurrences out of today's plan until their date arrives, and drops tasks
-  already completed for the day.
-
-- **Flexible filtering** — `filter_tasks(pet, status, category, due_on)` is the
-  single source of truth for task selection; each argument narrows the view
-  (by pet, status, category, or due date). `get_single_pet_tasks()` wraps it
-  for a per-pet, priority-sorted view.
-
-- **Plan explanation** — `explain_plan()` reports how many minutes were used,
-  which tasks were included, and why others were skipped, so the schedule is
-  transparent rather than a black box.
-
-## 📸 Demo Walkthrough
-
-Run `streamlit run app.py`, then follow along:
-
-1. **Add an owner** (e.g. `Sarah`) — switch between owners from the dropdown.
-2. **Add a pet** (e.g. `Biscuit`, dog, 3); it shows up in the pets table.
-3. **Add tasks** with priority, duration, repeat, and an optional fixed time.
-   Each pet's task table is already **sorted by priority, then shortest first**.
-4. **Set time available and generate** — tasks are fitted into your budget and
-   shown as a table in **chronological order**.
-5. **Review the results** — "Why this plan" lists included/**skipped** tasks,
-   overlapping fixed times raise a **conflict warning**, and completed
-   daily/weekly tasks **recur** on their next due date.
-
-**Main.py results**
-```
-================================================
-Sorting: pending tasks, high-priority & shortest-first
-================================================
-  Give meds (5 min, high priority, meds)
-  Feeding (10 min, high priority, feeding)
-  Morning walk (30 min, high priority, walk)
-  Play time (20 min, medium priority, enrichment)
-  Grooming (40 min, low priority, grooming)
-  ^ Feeding (10 min) sorts before Morning walk (30 min): same
-    priority, shorter duration wins the tie.
-
-================================================
-Filtering: by pet, by status, by category
-================================================
-Milo's pending tasks:
-  Play time (20 min, medium priority, enrichment)
-  Give meds (5 min, high priority, meds)
-
-Completed tasks (excluded from plans):
-  Early potty break (5 min, high priority, walk)
-
-Only 'walk' tasks that are still pending:
-  Morning walk (30 min, high priority, walk)
-
-================================================
-Today's Schedule
-================================================
-Daily plan for Sarah:
-  08:00 — Milo: Give meds (5 min) [priority: high]
-  08:05 — Biscuit: Feeding (10 min) [priority: high]
-  08:15 — Biscuit: Morning walk (30 min) [priority: high]
-  08:45 — Milo: Play time (20 min) [priority: medium]
-
-Why this plan:
-Planned 4 task(s) using 65 of 90 available minutes.
-  Included Milo's Give meds (5 min, high priority).
-  Included Biscuit's Feeding (10 min, high priority).
-  Included Biscuit's Morning walk (30 min, high priority).
-  Included Milo's Play time (20 min, medium priority).
-  Skipped Biscuit's Grooming — not enough time left (needs 40 min).
-
-================================================
-Conflict detection: two tasks at 08:00
-================================================
-Daily plan for Sarah:
-  08:00 — Milo: Give meds (10 min) [priority: high]
-  08:00 — Biscuit: Morning walk (30 min) [priority: high]
-
-⚠ Scheduler found 1 conflict(s):
-  - Milo's Give meds (08:00) overlaps Biscuit's Morning walk (08:00).
-
-================================================
-Recurrence: completing tasks on 2026-07-07
-================================================
-Completed 'Give meds' (daily) -> status now 'completed'.
-  Next 'Give meds' auto-scheduled for 2026-07-08 (was 2026-07-07).
-Completed 'Bath' (weekly) -> status now 'completed'.
-  Next 'Bath' auto-scheduled for 2026-07-14 (was 2026-07-07).
-
-Milo's task list now (completed originals + next occurrences):
-  Give meds: status=completed, due=—
-  Bath: status=completed, due=—
-  Give meds: status=pending, due=2026-07-08
-  Bath: status=pending, due=2026-07-14
+Sources:
+  - [Exercise] "For puppies, a common guideline is the 'five minutes per month of age'
+    rule: about five minutes of structured exercise per month of age, once or twice a day."
+  - [Exercise] "This protects growing joints from overexertion while still burning energy."
 ```
 
+**3. Off-topic question — no relevant notes, so the safe fallback fires with no model call**
 
+```text
+Q: How do I file my taxes?
+
+A: I don't have anything in my notes about that, so I'd rather not guess. For anything
+   specific to your pet, please ask your vet.
+
+Sources: (none)
+```
+
+## Design decisions
+
+- **Keyword retrieval (BM25), not embeddings.** The corpus is five short docs, so a
+  keyword index is accurate, instant, dependency-light, and — crucially — **deterministic
+  and key-free**, which makes retrieval unit-testable. Trade-off: BM25 misses pure semantic
+  matches, so I added a small stopword list and a tiny stemmer (`bathe/bathing → bath`,
+  `vaccinated/vaccinations → vaccin`) to bridge common wording gaps.
+- **Grounding over recall.** Passages that score zero are dropped, and if nothing survives,
+  the app answers from a fixed fallback **without calling the model**. This can occasionally
+  refuse a question the notes actually cover, but it makes hallucination structurally
+  impossible on off-topic input — the right trade-off for pet-care advice.
+- **Retrieval / generation split.** All the model-free logic lives in `KnowledgeBase`; only
+  `ask_pawpal` touches the API, imported lazily. Tests and the whole retrieval path run with
+  no key and no network.
+- **Structured, cited output.** Gemini has no native citation blocks, so I inline the
+  passages as numbered sources and require a JSON response (`response_schema`) with a
+  `quote` + `source` per claim. Trade-off: citations are model-produced rather than
+  server-verified spans, but the schema keeps parsing reliable and the quotes checkable.
+- **Owner-awareness by duck typing.** `ask_pawpal` only needs `.name` and `.pet_list`, so it
+  stays decoupled from the scheduler and easy to test with stubs.
+
+## Testing summary
+
+- **What worked:** `tests/test_rag.py` covers the RAG layer with no API key: a chocolate
+  question retrieves `toxic_foods.md`, an off-topic question returns no passages, and — the
+  key safety test — when context is missing, `ask_pawpal` returns the fixed fallback
+  **without ever calling the model** (verified by monkeypatching the API client to raise if
+  touched). All **18 tests pass** (15 original scheduler tests + 3 RAG tests). A manual
+  smoke test across eight sample questions routes each to the correct document.
+- **What didn't work at first:** Raw BM25 sent almost every "how/should/my …" question to
+  `feeding.md`, because common function words dominated the score. Vocabulary mismatches
+  (`bathe` vs `bath`, `vaccinated` vs `vaccination`) also misrouted questions.
+- **What I learned / fixed:** Dropping stopwords and adding a small suffix stemmer fixed the
+  routing — a reminder that most RAG quality problems are retrieval problems, not model
+  problems, and that a tiny amount of text normalization goes a long way. The generation
+  path depends on a live Gemini key, so it is validated manually rather than in CI.
+
+## Reflection
+
+Building Ask PawPal taught me that the hard part of an AI feature is usually **everything
+around the model**: what you retrieve, how you constrain it, and how you prove it's right.
+The most reliable safety mechanism I added wasn't a clever prompt — it was the deterministic
+"return nothing, answer from a fallback" path that never reaches the model at all. Framing
+the problem as "retrieve, then ground" made the system both testable and trustworthy.
+
+> The graded responsible-AI reflection — how I collaborated with AI, one helpful and one
+> flawed AI suggestion, and the system's limitations — is in
+> [`model_card.md`](model_card.md).
